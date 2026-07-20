@@ -1,0 +1,35 @@
+name: app_alerts_admin
+description: "Admin portal for authoring and publishing app_alerts alert feeds."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # The client package — reused for its Alert / AlertFeed models so the JSON
+  # this admin produces is exactly what the client consumes. Single source of
+  # truth for the wire contract.
+  app_alerts: ^0.1.0
+
+  # Pure-Dart HTTP for uploading the feed to the configured destination.
+  http: ^1.2.0
+
+  # Local persistence of the working feed and destination settings.
+  path_provider: ^2.1.4
+
+  # Native open/save dialogs for importing and exporting feed files.
+  file_picker: ^8.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
