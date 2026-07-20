@@ -20,6 +20,9 @@ dependencies:
   # Pure-Dart HTTP for uploading the feed to the configured destination.
   http: ^1.2.0
 
+  # HMAC-SHA256 for the built-in NetStorage upload authorizer.
+  crypto: ^3.0.0
+
   # Local persistence of the working feed and destination settings.
   path_provider: ^2.1.4
 

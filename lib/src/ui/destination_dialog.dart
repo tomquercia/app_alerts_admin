@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/destination_auth.dart';
 import '../models/upload_destination.dart';
 import '../state/admin_controller.dart';
 
@@ -82,7 +83,7 @@ class _DestinationsManager extends StatelessWidget {
                           ),
                           title: Text(d.name),
                           subtitle: Text(
-                            '${d.method.verb}  ${d.url}',
+                            '${d.method.verb} · ${d.auth.summary} · ${d.url}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -164,12 +165,21 @@ class _HeaderRow {
   final TextEditingController value;
 }
 
+enum _AuthKind { none, bearer, basic, netStorage }
+
 class _DestinationEditorDialogState extends State<_DestinationEditorDialog> {
   late final TextEditingController _name;
   late final TextEditingController _url;
   late final TextEditingController _contentType;
   late UploadMethod _method;
   late final List<_HeaderRow> _headers;
+
+  late _AuthKind _authKind;
+  late final TextEditingController _bearerToken;
+  late final TextEditingController _basicUser;
+  late final TextEditingController _basicPass;
+  late final TextEditingController _nsKeyName;
+  late final TextEditingController _nsKey;
 
   @override
   void initState() {
@@ -184,6 +194,25 @@ class _DestinationEditorDialogState extends State<_DestinationEditorDialog> {
               TextEditingController(text: e.value),
             ))
         .toList();
+
+    // Seed the auth fields from the destination's current scheme.
+    final DestinationAuth auth = widget.initial.auth;
+    _authKind = switch (auth) {
+      NoAuth() => _AuthKind.none,
+      BearerAuth() => _AuthKind.bearer,
+      BasicAuth() => _AuthKind.basic,
+      NetStorageAuth() => _AuthKind.netStorage,
+    };
+    _bearerToken =
+        TextEditingController(text: auth is BearerAuth ? auth.token : '');
+    _basicUser =
+        TextEditingController(text: auth is BasicAuth ? auth.username : '');
+    _basicPass =
+        TextEditingController(text: auth is BasicAuth ? auth.password : '');
+    _nsKeyName =
+        TextEditingController(text: auth is NetStorageAuth ? auth.keyName : '');
+    _nsKey =
+        TextEditingController(text: auth is NetStorageAuth ? auth.key : '');
   }
 
   @override
@@ -195,7 +224,96 @@ class _DestinationEditorDialogState extends State<_DestinationEditorDialog> {
       h.key.dispose();
       h.value.dispose();
     }
+    _bearerToken.dispose();
+    _basicUser.dispose();
+    _basicPass.dispose();
+    _nsKeyName.dispose();
+    _nsKey.dispose();
     super.dispose();
+  }
+
+  DestinationAuth _buildAuth() {
+    return switch (_authKind) {
+      _AuthKind.none => const NoAuth(),
+      _AuthKind.bearer => BearerAuth(token: _bearerToken.text.trim()),
+      _AuthKind.basic => BasicAuth(
+          username: _basicUser.text.trim(),
+          password: _basicPass.text,
+        ),
+      _AuthKind.netStorage => NetStorageAuth(
+          keyName: _nsKeyName.text.trim(),
+          key: _nsKey.text.trim(),
+        ),
+    };
+  }
+
+  List<Widget> _authFields(ThemeData theme) {
+    switch (_authKind) {
+      case _AuthKind.none:
+        return const <Widget>[];
+      case _AuthKind.bearer:
+        return <Widget>[
+          const SizedBox(height: 12),
+          TextField(
+            controller: _bearerToken,
+            decoration: const InputDecoration(
+              labelText: 'Token',
+              hintText: 'Sent as: Authorization: Bearer …',
+            ),
+            obscureText: true,
+          ),
+        ];
+      case _AuthKind.basic:
+        return <Widget>[
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: TextField(
+                  controller: _basicUser,
+                  decoration: const InputDecoration(labelText: 'Username'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _basicPass,
+                  decoration: const InputDecoration(labelText: 'Password'),
+                  obscureText: true,
+                ),
+              ),
+            ],
+          ),
+        ];
+      case _AuthKind.netStorage:
+        return <Widget>[
+          const SizedBox(height: 12),
+          TextField(
+            controller: _nsKeyName,
+            decoration: const InputDecoration(
+              labelText: 'Key name (id)',
+              hintText: 'NetStorage upload account key name',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _nsKey,
+            decoration: const InputDecoration(
+              labelText: 'Key',
+              hintText: 'Upload account secret key',
+            ),
+            obscureText: true,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Requests are signed with HMAC-SHA256 into X-Akamai-ACS-* headers. '
+            'For other schemes, inject a custom UploadAuthorizer in code.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ];
+    }
   }
 
   bool get _valid {
@@ -222,6 +340,7 @@ class _DestinationEditorDialogState extends State<_DestinationEditorDialog> {
             ? 'application/json'
             : _contentType.text.trim(),
         headers: headers,
+        auth: _buildAuth(),
       ),
     );
   }
@@ -283,6 +402,29 @@ class _DestinationEditorDialogState extends State<_DestinationEditorDialog> {
                 ],
               ),
               const SizedBox(height: 20),
+              Text('Authentication', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<_AuthKind>(
+                initialValue: _authKind,
+                decoration: const InputDecoration(labelText: 'Scheme'),
+                items: const <DropdownMenuItem<_AuthKind>>[
+                  DropdownMenuItem<_AuthKind>(
+                      value: _AuthKind.none,
+                      child: Text('None (headers only)')),
+                  DropdownMenuItem<_AuthKind>(
+                      value: _AuthKind.bearer, child: Text('Bearer token')),
+                  DropdownMenuItem<_AuthKind>(
+                      value: _AuthKind.basic,
+                      child: Text('Basic (user / pass)')),
+                  DropdownMenuItem<_AuthKind>(
+                      value: _AuthKind.netStorage,
+                      child: Text('Akamai NetStorage (HMAC)')),
+                ],
+                onChanged: (_AuthKind? v) =>
+                    setState(() => _authKind = v ?? _AuthKind.none),
+              ),
+              ..._authFields(theme),
+              const SizedBox(height: 20),
               Row(
                 children: <Widget>[
                   Expanded(
@@ -297,8 +439,8 @@ class _DestinationEditorDialogState extends State<_DestinationEditorDialog> {
                 ],
               ),
               Text(
-                'For authentication — e.g. Authorization, or NetStorage’s '
-                'X-Akamai-ACS-* headers.',
+                'Extra headers sent with every upload, composed on top of the '
+                'auth scheme above.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

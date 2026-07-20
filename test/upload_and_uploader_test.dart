@@ -1,8 +1,18 @@
+import 'package:app_alerts_admin/src/models/destination_auth.dart';
 import 'package:app_alerts_admin/src/models/upload_destination.dart';
 import 'package:app_alerts_admin/src/services/feed_uploader.dart';
+import 'package:app_alerts_admin/src/services/upload_authorizer.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+class _SentinelAuthorizer implements UploadAuthorizer {
+  @override
+  Map<String, String> authorize(UploadRequest request) => <String, String>{
+        ...request.headers,
+        'X-Custom-Auth': 'custom-sig',
+      };
+}
 
 void main() {
   group('UploadDestination', () {
@@ -109,6 +119,71 @@ void main() {
         body: '{}',
       );
       expect(result.success, isFalse);
+    });
+  });
+
+  group('authorization', () {
+    test('applies the destination bearer auth', () async {
+      late http.Request seen;
+      final HttpFeedUploader uploader = HttpFeedUploader(
+        client: MockClient((http.Request req) async {
+          seen = req;
+          return http.Response('', 200);
+        }),
+      );
+      await uploader.upload(
+        destination: const UploadDestination(
+          name: 'D',
+          url: 'https://e.com/f.json',
+          auth: BearerAuth(token: 'abc'),
+        ),
+        body: '{}',
+      );
+      expect(seen.headers['Authorization'], 'Bearer abc');
+    });
+
+    test('a custom authorizer override wins over destination auth', () async {
+      late http.Request seen;
+      final HttpFeedUploader uploader = HttpFeedUploader(
+        client: MockClient((http.Request req) async {
+          seen = req;
+          return http.Response('', 200);
+        }),
+        authorizer: _SentinelAuthorizer(),
+      );
+      expect(uploader.hasAuthorizerOverride, isTrue);
+      await uploader.upload(
+        // Destination asks for bearer, but the override replaces it.
+        destination: const UploadDestination(
+          name: 'D',
+          url: 'https://e.com/f.json',
+          auth: BearerAuth(token: 'ignored'),
+        ),
+        body: '{}',
+      );
+      expect(seen.headers['X-Custom-Auth'], 'custom-sig');
+      expect(seen.headers.containsKey('Authorization'), isFalse);
+    });
+
+    test('static headers still ride along under an auth scheme', () async {
+      late http.Request seen;
+      final HttpFeedUploader uploader = HttpFeedUploader(
+        client: MockClient((http.Request req) async {
+          seen = req;
+          return http.Response('', 200);
+        }),
+      );
+      await uploader.upload(
+        destination: const UploadDestination(
+          name: 'D',
+          url: 'https://e.com/f.json',
+          headers: <String, String>{'X-Env': 'prod'},
+          auth: BearerAuth(token: 'abc'),
+        ),
+        body: '{}',
+      );
+      expect(seen.headers['X-Env'], 'prod');
+      expect(seen.headers['Authorization'], 'Bearer abc');
     });
   });
 }

@@ -1,6 +1,7 @@
 import 'package:http/http.dart' as http;
 
 import '../models/upload_destination.dart';
+import 'upload_authorizer.dart';
 
 /// The outcome of an upload attempt.
 class UploadResult {
@@ -35,17 +36,29 @@ abstract class FeedUploader {
 /// S3/GCS presigned URLs, and any object store or endpoint that accepts a
 /// `PUT`/`POST` of the JSON body with configured headers.
 class HttpFeedUploader implements FeedUploader {
-  /// Creates an uploader. Inject a [client] in tests; a default is created
-  /// (and closed) per call otherwise.
+  /// Creates an uploader.
+  ///
+  /// Inject a [client] in tests; a default is created (and closed) per call
+  /// otherwise. Pass an [authorizer] to **override** authentication for every
+  /// upload with your own [UploadAuthorizer] — the code seam for custom auth
+  /// (AWS SigV4, OAuth refresh, bespoke signing). When omitted, each upload
+  /// uses the authorizer derived from its destination's configured
+  /// [UploadDestination.auth].
   HttpFeedUploader({
     http.Client? client,
     this.timeout = const Duration(seconds: 30),
-  }) : _client = client;
+    UploadAuthorizer? authorizer,
+  })  : _client = client,
+        _authorizerOverride = authorizer;
 
   final http.Client? _client;
+  final UploadAuthorizer? _authorizerOverride;
 
   /// Per-request timeout.
   final Duration timeout;
+
+  /// Whether a custom authorizer override is in effect for all uploads.
+  bool get hasAuthorizerOverride => _authorizerOverride != null;
 
   @override
   Future<UploadResult> upload({
@@ -61,12 +74,32 @@ class HttpFeedUploader implements FeedUploader {
 
     final http.Client client = _client ?? http.Client();
     try {
+      // Base headers = content type + the destination's static headers, then
+      // the authorizer (override or per-destination) composes auth on top.
+      final Map<String, String> baseHeaders = <String, String>{
+        'content-type': destination.contentType,
+        for (final MapEntry<String, String> e in destination.headers.entries)
+          if (e.key.trim().isNotEmpty) e.key: e.value,
+      };
+      final UploadAuthorizer authorizer =
+          _authorizerOverride ?? authorizerFor(destination.auth);
+      final Map<String, String> finalHeaders = await authorizer.authorize(
+        UploadRequest(
+          method: destination.method.verb,
+          url: uri,
+          body: body,
+          contentType: destination.contentType,
+          headers: baseHeaders,
+        ),
+      );
+
       final http.Request request = http.Request(destination.method.verb, uri)
-        ..body = body
-        ..headers['content-type'] = destination.contentType;
-      destination.headers.forEach((String k, String v) {
+        ..body = body;
+      finalHeaders.forEach((String k, String v) {
         if (k.trim().isNotEmpty) request.headers[k] = v;
       });
+      request.headers
+          .putIfAbsent('content-type', () => destination.contentType);
 
       final http.StreamedResponse streamed =
           await client.send(request).timeout(timeout);
